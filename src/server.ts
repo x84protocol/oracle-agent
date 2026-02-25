@@ -9,9 +9,52 @@ import type { Task, TaskArtifact, TaskState } from "./store.js";
 
 // ─── Types ──────────────────────────────────────────────────
 
+// A2A Part types (spec RC v1.0)
+interface TextPart {
+  kind: "text";
+  text: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface FileWithBytes {
+  bytes: string; // base64-encoded
+  mimeType?: string;
+  name?: string;
+}
+
+interface FileWithUri {
+  uri: string;
+  mimeType?: string;
+  name?: string;
+}
+
+interface FilePart {
+  kind: "file";
+  file: FileWithBytes | FileWithUri;
+  metadata?: Record<string, unknown>;
+}
+
+interface DataPart {
+  kind: "data";
+  data: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+type Part = TextPart | FilePart | DataPart;
+
 interface A2AMessage {
-  role: string;
-  parts: Array<{ type: string; text?: string }>;
+  messageId?: string;
+  role: "user" | "agent";
+  parts: Part[];
+  contextId?: string;
+  taskId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface MessageSendConfiguration {
+  acceptedOutputModes?: string[];
+  historyLength?: number;
+  blocking?: boolean;
 }
 
 interface A2AJsonRpcRequest {
@@ -20,6 +63,7 @@ interface A2AJsonRpcRequest {
   method: string;
   params?: {
     message?: A2AMessage;
+    configuration?: MessageSendConfiguration;
     contextId?: string;
     id?: string;
   };
@@ -30,7 +74,9 @@ interface AgentCardSkill {
   name: string;
   description: string;
   tags: string[];
-  examples: string[];
+  examples?: string[];
+  inputModes?: string[];  // overrides agent-level defaults per skill
+  outputModes?: string[]; // overrides agent-level defaults per skill
 }
 
 interface AgentCard {
@@ -38,6 +84,8 @@ interface AgentCard {
   description: string;
   url: string;
   version: string;
+  defaultInputModes: string[];   // MIME types accepted as input
+  defaultOutputModes: string[];  // MIME types produced as output
   capabilities: {
     streaming: boolean;
     pushNotifications: boolean;
@@ -55,11 +103,54 @@ setOpenAIResponsesTransport("websocket");
 
 // ─── Helpers ────────────────────────────────────────────────
 
+// Supported MIME types for this agent
+const SUPPORTED_INPUT_MODES = ["text/plain"];
+const SUPPORTED_OUTPUT_MODES = ["text/plain"];
+
 function extractText(message: A2AMessage): string {
   return message.parts
-    .filter((p) => p.type === "text" && p.text)
-    .map((p) => p.text!)
+    .filter((p): p is TextPart => p.kind === "text" && !!p.text)
+    .map((p) => p.text)
     .join("\n");
+}
+
+/**
+ * Validate client's acceptedOutputModes against agent's supported modes.
+ * Returns null if valid, or the JSON-RPC error object if not.
+ */
+function validateOutputModes(
+  config?: MessageSendConfiguration,
+): { code: number; message: string } | null {
+  if (!config?.acceptedOutputModes || config.acceptedOutputModes.length === 0) {
+    return null; // no preference — agent chooses freely
+  }
+  const overlap = config.acceptedOutputModes.filter((m) =>
+    SUPPORTED_OUTPUT_MODES.includes(m),
+  );
+  if (overlap.length === 0) {
+    return {
+      code: -32005,
+      message: `Content type not supported. Agent supports: ${SUPPORTED_OUTPUT_MODES.join(", ")}. Client accepts: ${config.acceptedOutputModes.join(", ")}`,
+    };
+  }
+  return null;
+}
+
+/**
+ * Validate that input message parts use supported content types.
+ */
+function validateInputParts(
+  parts: Part[],
+): { code: number; message: string } | null {
+  for (const part of parts) {
+    if (part.kind !== "text") {
+      return {
+        code: -32005,
+        message: `Unsupported input part kind: "${part.kind}". This agent only accepts text input.`,
+      };
+    }
+  }
+  return null;
 }
 
 function taskToA2A(task: Task) {
@@ -113,6 +204,8 @@ export function createServer(config: ServerConfig): {
       "A2A protocol, and the x84 ecosystem. Founded by @johnnymcware.",
     url: config.agentUrl,
     version: "0.1.0",
+    defaultInputModes: SUPPORTED_INPUT_MODES,
+    defaultOutputModes: SUPPORTED_OUTPUT_MODES,
     capabilities: {
       streaming: true,
       pushNotifications: false,
@@ -309,6 +402,20 @@ export function createServer(config: ServerConfig): {
           return;
         }
 
+        // Validate input content types
+        const inputErr = validateInputParts(message.parts);
+        if (inputErr) {
+          res.status(415).json({ jsonrpc: "2.0", id, error: inputErr });
+          return;
+        }
+
+        // Validate client's accepted output modes
+        const outputErr = validateOutputModes(params.configuration);
+        if (outputErr) {
+          res.status(415).json({ jsonrpc: "2.0", id, error: outputErr });
+          return;
+        }
+
         const userText = extractText(message);
         if (!userText) {
           res.status(400).json({
@@ -339,7 +446,7 @@ export function createServer(config: ServerConfig): {
 
           const endState = resolveEndState(taskId);
           const artifacts: TaskArtifact[] = [
-            { name: "response", parts: [{ type: "text", text: output }] },
+            { name: "response", parts: [{ kind: "text", text: output } as TextPart] },
           ];
           store.setTaskArtifacts(taskId, artifacts);
           store.updateTaskStatus(taskId, endState);
@@ -365,6 +472,20 @@ export function createServer(config: ServerConfig): {
             id,
             error: { code: -32602, message: "Missing message in params" },
           });
+          return;
+        }
+
+        // Validate input content types
+        const inputErr = validateInputParts(message.parts);
+        if (inputErr) {
+          res.status(415).json({ jsonrpc: "2.0", id, error: inputErr });
+          return;
+        }
+
+        // Validate client's accepted output modes
+        const outputErr = validateOutputModes(params.configuration);
+        if (outputErr) {
+          res.status(415).json({ jsonrpc: "2.0", id, error: outputErr });
           return;
         }
 
@@ -440,7 +561,7 @@ export function createServer(config: ServerConfig): {
                 contextId,
                 artifact: {
                   name: "response",
-                  parts: [{ type: "text", text: delta }],
+                  parts: [{ kind: "text", text: delta } as TextPart],
                   append: true,
                 },
               });
@@ -469,7 +590,7 @@ export function createServer(config: ServerConfig): {
           if (!fullText && result.finalOutput) {
             fullText = result.finalOutput;
             store.setTaskArtifacts(taskId, [
-              { name: "response", parts: [{ type: "text", text: fullText }] },
+              { name: "response", parts: [{ kind: "text", text: fullText } as TextPart] },
             ]);
             sendEvent({
               kind: "artifact-update",
@@ -477,7 +598,7 @@ export function createServer(config: ServerConfig): {
               contextId,
               artifact: {
                 name: "response",
-                parts: [{ type: "text", text: fullText }],
+                parts: [{ kind: "text", text: fullText } as TextPart],
               },
             });
           }

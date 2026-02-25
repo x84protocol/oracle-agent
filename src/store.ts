@@ -21,10 +21,21 @@ export type TaskState =
   | "failed"
   | "canceled";
 
+export interface TaskArtifactPart {
+  kind: "text" | "file" | "data";
+  text?: string;
+  file?: { bytes?: string; uri?: string; mimeType?: string; name?: string };
+  data?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
 export interface TaskArtifact {
-  name: string;
-  parts: Array<{ type: string; text?: string }>;
+  artifactId?: string;
+  name?: string;
+  description?: string;
+  parts: TaskArtifactPart[];
   append?: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 export interface Task {
@@ -216,15 +227,15 @@ export class Store {
     if (task.artifacts.length === 0) {
       task.artifacts.push({
         name: "response",
-        parts: [{ type: "text", text }],
+        parts: [{ kind: "text", text }],
       });
     } else {
       const last = task.artifacts[0];
-      const textPart = last.parts.find((p) => p.type === "text");
+      const textPart = last.parts.find((p) => p.kind === "text");
       if (textPart) {
         textPart.text = (textPart.text ?? "") + text;
       } else {
-        last.parts.push({ type: "text", text });
+        last.parts.push({ kind: "text", text });
       }
     }
 
