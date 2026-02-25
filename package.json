@@ -1,0 +1,31 @@
+{
+  "name": "@x84-ai/oracle-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "x84 Protocol Oracle — an AI agent that knows everything about x84, served via A2A protocol using @openai/agents",
+  "scripts": {
+    "dev": "NODE_NO_WARNINGS=1 tsx watch src/index.ts",
+    "start": "NODE_NO_WARNINGS=1 tsx src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openai/agents": "^0.5.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "openai": "^6.0.0",
+    "uuid": "^11.1.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}
