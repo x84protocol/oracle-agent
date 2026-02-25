@@ -11,7 +11,7 @@ The Oracle Agent knows everything about x84:
 - **Protocol mechanics** — 23 on-chain instructions, 9 PDA types, 47 error codes, settlement modes, delegation system, reputation model
 - **SDK usage** — `@x84-ai/sdk` with instruction builders, PDA derivation, account fetchers, settlement, events, errors, and REST API client
 - **Architecture** — Anchor/Rust program, NestJS backend, LangGraph runtime, Metaplex Core NFTs
-- **Vision & ecosystem** — "Shopify for AI Agents", revenue model, build phases, A2A + x402 protocols
+- **Vision & ecosystem** — Infrastructure layer for the autonomous agent economy, revenue model, build phases, A2A + x402 protocols
 
 ## Architecture
 
