@@ -1,6 +1,8 @@
 import "dotenv/config";
 import OpenAI from "openai";
 import { VectorStore } from "./rag.js";
+import { Store } from "./store.js";
+import { OracleAgentExecutor } from "./a2a-executor.js";
 import { createServer } from "./server.js";
 
 async function main() {
@@ -15,24 +17,34 @@ async function main() {
   // ─── Initialize RAG Vector Store ──────────────────────
 
   const openai = new OpenAI();
-  const store = new VectorStore(openai);
+  const vectorStore = new VectorStore(openai);
 
   console.log("[startup] Initializing knowledge base...");
-  const chunkCount = await store.init();
+  const chunkCount = await vectorStore.init();
   console.log(`[startup] Knowledge base ready (${chunkCount} chunks indexed)`);
+
+  // ─── Initialize Session Store ─────────────────────────
+
+  const sessionStore = new Store();
+
+  // ─── Create Executor ──────────────────────────────────
+
+  const executor = new OracleAgentExecutor(vectorStore, sessionStore);
 
   // ─── Configuration ────────────────────────────────────
 
   const port = parseInt(process.env.PORT ?? "4100");
   const host = process.env.HOST ?? "0.0.0.0";
   const agentUrl = process.env.AGENT_URL ?? `http://localhost:${port}`;
+  const basePath = process.env.BASE_PATH ?? "";
 
   const server = createServer({
     port,
     host,
     agentUrl,
-    agentMint: process.env.AGENT_NFT_MINT || undefined,
-    store,
+    basePath,
+    agentMint: process.env.AGENT_MINT || process.env.AGENT_NFT_MINT || undefined,
+    executor,
   });
 
   // ─── Start ────────────────────────────────────────────
@@ -43,6 +55,7 @@ async function main() {
 
   const shutdown = () => {
     console.log("\nShutting down oracle agent...");
+    sessionStore.close();
     process.exit(0);
   };
 
