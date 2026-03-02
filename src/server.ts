@@ -1,14 +1,12 @@
+import type { AgentCard } from "@a2a-js/sdk";
+import type { AgentExecutor } from "@a2a-js/sdk/server";
+import { DefaultRequestHandler, InMemoryTaskStore } from "@a2a-js/sdk/server";
+import { A2AExpressApp } from "@a2a-js/sdk/server/express";
 import { setOpenAIAPI, setOpenAIResponsesTransport } from "@openai/agents";
+import { x84PaymentGate } from "@x84-ai/x402/middleware";
+import cors from "cors";
 import type { Request, Response } from "express";
 import express from "express";
-import type { AgentCard } from "@a2a-js/sdk";
-import {
-  DefaultRequestHandler,
-  InMemoryTaskStore,
-} from "@a2a-js/sdk/server";
-import type { AgentExecutor } from "@a2a-js/sdk/server";
-import { A2AExpressApp } from "@a2a-js/sdk/server/express";
-import { x84PaymentGate } from "@x84-ai/x402/middleware";
 
 setOpenAIAPI("responses");
 setOpenAIResponsesTransport("websocket");
@@ -109,12 +107,15 @@ export function createServer(config: ServerConfig): {
 
   const app = express();
   app.use(express.json());
+  app.use(cors());
 
   // ─── x402 Payment Gate ─────────────────────────────────
 
+  // Compute A2A path early so x402 gate can reference it
+  const a2aPath = config.basePath ? `${config.basePath}/a2a` : "/a2a";
+
   if (config.agentMint) {
     const network = process.env.SOLANA_NETWORK ?? "devnet";
-    const routeKey = config.basePath ? `POST ${config.basePath}` : "POST /";
 
     app.use(
       x84PaymentGate({
@@ -122,7 +123,7 @@ export function createServer(config: ServerConfig): {
         network,
         rpcUrl: process.env.SOLANA_RPC_URL,
         routes: {
-          [routeKey]: {
+          [`POST ${a2aPath}`]: {
             description: "x84 Protocol Oracle — expert knowledge query",
           },
         },
@@ -148,9 +149,19 @@ export function createServer(config: ServerConfig): {
     });
   });
 
-  // ─── A2A Routes (agent card + JSON-RPC) ─────────────────
+  // ─── Agent Card (always at root / basePath) ──────────────
 
-  a2aApp.setupRoutes(app, config.basePath);
+  const cardPath = config.basePath
+    ? `${config.basePath}/.well-known/agent-card.json`
+    : "/.well-known/agent-card.json";
+
+  app.get(cardPath, (_req: Request, res: Response) => {
+    res.json(agentCard);
+  });
+
+  // ─── A2A JSON-RPC (at /a2a under basePath) ─────────────
+
+  a2aApp.setupRoutes(app, a2aPath);
 
   return {
     app,
@@ -158,11 +169,7 @@ export function createServer(config: ServerConfig): {
     start: () =>
       new Promise<void>((resolve) => {
         app.listen(config.port, config.host, () => {
-          const bp = config.basePath || "";
-          const rpcPath = bp ? `POST ${bp}/` : "POST /";
-          const cardPath = bp
-            ? `${bp}/.well-known/agent-card.json`
-            : "/.well-known/agent-card.json";
+          const rpcPath = `POST ${a2aPath}`;
           console.log(`
 ┌─────────────────────────────────────────────────┐
 │              x84 Protocol Oracle                │
